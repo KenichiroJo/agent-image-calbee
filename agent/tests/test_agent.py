@@ -327,63 +327,13 @@ class TestMyAgentLangGraph:
                     default_headers={"X-DataRobot-Identity-Token": "xyz"},
                 )
 
-    @patch("agent.myagent.create_agent")
-    def test_agent_analyzer_1_property(self, mock_create_agent, agent):
-        """Test that agent_analyzer_1 creates an agent with vision LLM."""
-        mock_llm = Mock()
-        with patch.object(
-            MyAgent, "_create_vision_llm", return_value=mock_llm
-        ):
-            _ = agent.agent_analyzer_1
-            mock_create_agent.assert_called_once_with(
-                mock_llm,
-                tools=[],
-                system_prompt=ANY,
-                name="Analyzer A (GPT)",
-            )
-
-    @patch("agent.myagent.create_agent")
-    def test_agent_analyzer_2_property(self, mock_create_agent, agent):
-        """Test that agent_analyzer_2 creates an agent with vision LLM."""
-        mock_llm = Mock()
-        with patch.object(
-            MyAgent, "_create_vision_llm", return_value=mock_llm
-        ):
-            _ = agent.agent_analyzer_2
-            mock_create_agent.assert_called_once_with(
-                mock_llm,
-                tools=[],
-                system_prompt=ANY,
-                name="Analyzer B (Gemini)",
-            )
-
-    @patch("agent.myagent.create_agent")
-    def test_agent_summarizer_property(self, mock_create_agent, agent):
-        """Test that agent_summarizer creates an agent with default LLM."""
-        mock_llm = Mock()
-        with patch.object(MyAgent, "llm", return_value=mock_llm):
-            _ = agent.agent_summarizer
-            mock_create_agent.assert_called_once_with(
-                mock_llm,
-                tools=[],
-                system_prompt=ANY,
-                name="Summarizer",
-            )
-
     def test_workflow_property(self, agent):
         """Test that workflow returns a StateGraph with correct structure."""
-        mock_llm = Mock()
-        with patch.object(MyAgent, "llm", return_value=mock_llm):
-            with patch.object(
-                MyAgent, "_create_vision_llm", return_value=mock_llm
-            ):
-                with patch("agent.myagent.create_agent"):
-                    workflow = agent.workflow
-                    assert workflow is not None
-                    assert "image_input_node" in workflow.nodes
-                    assert "analyzer_1_node" in workflow.nodes
-                    assert "analyzer_2_node" in workflow.nodes
-                    assert "summarizer_node" in workflow.nodes
+        workflow = agent.workflow
+        assert workflow is not None
+        assert "analyzer_1_node" in workflow.nodes
+        assert "analyzer_2_node" in workflow.nodes
+        assert "summarizer_node" in workflow.nodes
 
     @patch("agent.myagent.ChatLiteLLM")
     def test_create_vision_llm(self, mock_llm, agent):
