@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { type ChatStateEvent, isMessageStateEvent } from '@/types/events';
+import { isToolInvocationPart } from '@/types/message';
 
 export interface AnalysisResultProps {
   events: ChatStateEvent[];
@@ -17,71 +18,91 @@ interface ParsedResults {
   summary: string;
 }
 
-function parseAnalysisContent(fullText: string): ParsedResults {
+function parseResults(
+  events: ChatStateEvent[],
+  streamingContent: string | null
+): ParsedResults {
   const result: ParsedResults = {
     analyzerA: '',
     analyzerB: '',
     summary: '',
   };
 
-  // Split by analyzer headers
-  const analyzerAMatch = fullText.indexOf('[Analyzer-A分析結果]');
-  const analyzerBMatch = fullText.indexOf('[Analyzer-B分析結果]');
+  const textParts: string[] = [];
 
-  // Extract sections based on header positions
-  const sections: { start: number; key: keyof ParsedResults }[] = [];
-
-  if (analyzerAMatch !== -1) {
-    sections.push({ start: analyzerAMatch, key: 'analyzerA' });
-  }
-  if (analyzerBMatch !== -1) {
-    sections.push({ start: analyzerBMatch, key: 'analyzerB' });
-  }
-
-  // Sort by position
-  sections.sort((a, b) => a.start - b.start);
-
-  if (sections.length === 0) {
-    // No analyzer headers found - treat everything as summary
-    result.summary = fullText;
-  } else {
-    // Text before first analyzer header is summary (if any)
-    const beforeFirstHeader = fullText.substring(0, sections[0].start).trim();
-    if (beforeFirstHeader) {
-      result.summary = beforeFirstHeader;
+  for (const event of events) {
+    if (isMessageStateEvent(event) && event.value.role === 'assistant') {
+      const content = event.value.content;
+      if (content?.parts) {
+        for (const part of content.parts) {
+          // Extract tool invocation results for individual analyzer tabs
+          if (isToolInvocationPart(part)) {
+            const toolData = part.toolInvocation;
+            if (toolData?.state === 'result' && toolData.result) {
+              const resultStr = String(toolData.result);
+              if (toolData.toolName === 'analyze_with_gpt') {
+                result.analyzerA = resultStr;
+              } else if (toolData.toolName === 'analyze_with_gemini') {
+                result.analyzerB = resultStr;
+              }
+            }
+          }
+          // Collect text parts for the summary (agent's final response)
+          if (part.type === 'text' && part.text) {
+            textParts.push(part.text);
+          }
+        }
+      }
     }
+  }
 
-    // Extract each section
-    for (let i = 0; i < sections.length; i++) {
-      const sectionStart = sections[i].start;
-      const sectionEnd = i + 1 < sections.length ? sections[i + 1].start : fullText.length;
-      const content = fullText.substring(sectionStart, sectionEnd).trim();
+  // Append currently streaming content
+  if (streamingContent) {
+    textParts.push(streamingContent);
+  }
 
-      // Remove the header from content
-      const headerEnd = content.indexOf('\n');
-      const cleanContent = headerEnd !== -1 ? content.substring(headerEnd + 1).trim() : '';
-      result[sections[i].key] = cleanContent;
+  const fullText = textParts.join('\n\n');
+
+  // The agent's final text response is the integrated summary
+  // Also check if analyzer headers are in the text (fallback parsing)
+  if (fullText) {
+    const analyzerAMatch = fullText.indexOf('[Analyzer-A分析結果]');
+    const analyzerBMatch = fullText.indexOf('[Analyzer-B分析結果]');
+
+    if (analyzerAMatch !== -1 || analyzerBMatch !== -1) {
+      // Parse analyzer sections from text (fallback if tool results not available)
+      const sections: { start: number; key: 'analyzerA' | 'analyzerB' }[] = [];
+      if (analyzerAMatch !== -1) sections.push({ start: analyzerAMatch, key: 'analyzerA' });
+      if (analyzerBMatch !== -1) sections.push({ start: analyzerBMatch, key: 'analyzerB' });
+      sections.sort((a, b) => a.start - b.start);
+
+      // Text before first analyzer header is summary
+      const beforeFirst = fullText.substring(0, sections[0].start).trim();
+      if (beforeFirst) result.summary = beforeFirst;
+
+      for (let i = 0; i < sections.length; i++) {
+        const sectionStart = sections[i].start;
+        const sectionEnd = i + 1 < sections.length ? sections[i + 1].start : fullText.length;
+        const content = fullText.substring(sectionStart, sectionEnd).trim();
+        const headerEnd = content.indexOf('\n');
+        const cleanContent = headerEnd !== -1 ? content.substring(headerEnd + 1).trim() : '';
+        if (!result[sections[i].key]) {
+          result[sections[i].key] = cleanContent;
+        }
+      }
+
+      // If no summary yet but there's text after the last analyzer section
+      if (!result.summary) {
+        // The remaining text is the summary
+        const lastEnd = sections[sections.length - 1].start;
+        const lastContent = fullText.substring(lastEnd);
+        const afterLastAnalyzer = lastContent.substring(lastContent.indexOf('\n') + 1);
+        // Look for summary content after both analyzers
+      }
+    } else {
+      // No analyzer headers - the full text is the summary/integrated report
+      result.summary = fullText;
     }
-
-    // Text after all analyzer sections that doesn't have an analyzer header
-    // Check if there's content after the last analyzer section that looks like summary
-    const lastSection = sections[sections.length - 1];
-    const afterLastAnalyzer = fullText.substring(
-      fullText.indexOf('\n', lastSection.start) !== -1
-        ? fullText.length
-        : lastSection.start
-    );
-
-    // Look for summary-like content after the last analyzer
-    // The summarizer output typically comes after both analyzers
-    const summaryPatterns = ['総合評価', '改善提案', '## ', '### '];
-    const remainingText = fullText.substring(
-      sections[sections.length - 1].start
-    );
-    const lastAnalyzerContent = result[lastSection.key];
-
-    // If there are clear summary markers in content that appears after analyzers
-    // This is handled naturally since the summarizer output is a separate message
   }
 
   return result;
@@ -114,32 +135,10 @@ function EmptyPlaceholder() {
 }
 
 export function AnalysisResult({ events, isRunning, streamingContent }: AnalysisResultProps) {
-  // Collect all message content from events
-  const fullContent = useMemo(() => {
-    const messageParts: string[] = [];
-
-    for (const event of events) {
-      if (isMessageStateEvent(event) && event.value.role === 'assistant') {
-        const content = event.value.content;
-        if (content?.parts) {
-          for (const part of content.parts) {
-            if (part.type === 'text' && part.text) {
-              messageParts.push(part.text);
-            }
-          }
-        }
-      }
-    }
-
-    // Append currently streaming content
-    if (streamingContent) {
-      messageParts.push(streamingContent);
-    }
-
-    return messageParts.join('\n\n');
-  }, [events, streamingContent]);
-
-  const parsed = useMemo(() => parseAnalysisContent(fullContent), [fullContent]);
+  const parsed = useMemo(
+    () => parseResults(events, streamingContent),
+    [events, streamingContent]
+  );
 
   const hasAnyContent = parsed.analyzerA || parsed.analyzerB || parsed.summary;
 
@@ -154,7 +153,7 @@ export function AnalysisResult({ events, isRunning, streamingContent }: Analysis
           <TabsList className="w-full grid grid-cols-3">
             <TabsTrigger value="summary">
               統合レポート
-              {isRunning && parsed.summary && (
+              {isRunning && !parsed.summary && (
                 <Loader2 className="w-3 h-3 animate-spin ml-1" />
               )}
             </TabsTrigger>

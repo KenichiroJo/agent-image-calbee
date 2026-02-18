@@ -327,13 +327,29 @@ class TestMyAgentLangGraph:
                     default_headers={"X-DataRobot-Identity-Token": "xyz"},
                 )
 
-    def test_workflow_property(self, agent):
+    @patch("agent.myagent.create_react_agent")
+    def test_agent_property(self, mock_create_react_agent, agent):
+        """Test that agent property creates a ReAct agent with tools."""
+        mock_llm = Mock()
+        with patch.object(MyAgent, "llm", return_value=mock_llm):
+            _ = agent.agent
+            mock_create_react_agent.assert_called_once_with(
+                mock_llm,
+                tools=ANY,
+                prompt=ANY,
+            )
+            # Verify tools are passed
+            call_args = mock_create_react_agent.call_args
+            tools = call_args.kwargs.get("tools") or call_args[1].get("tools")
+            assert len(tools) == 2
+
+    @patch("agent.myagent.create_react_agent")
+    def test_workflow_property(self, mock_create_react_agent, agent):
         """Test that workflow returns a StateGraph with correct structure."""
+        mock_create_react_agent.return_value = Mock()
         workflow = agent.workflow
         assert workflow is not None
-        assert "analyzer_1_node" in workflow.nodes
-        assert "analyzer_2_node" in workflow.nodes
-        assert "summarizer_node" in workflow.nodes
+        assert "agent" in workflow.nodes
 
     @patch("agent.myagent.ChatLiteLLM")
     def test_create_vision_llm(self, mock_llm, agent):
