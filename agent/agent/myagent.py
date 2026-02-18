@@ -92,27 +92,37 @@ def _call_vision_llm(
     agent: "MyAgent",
 ) -> str:
     """Call a vision LLM with an image and return the text response."""
-    image_base64, clean_text = _load_image_base64(user_text, agent.config)
+    try:
+        image_base64, clean_text = _load_image_base64(user_text, agent.config)
 
-    vision_llm = agent._create_vision_llm(model_name)
+        vision_llm = agent._create_vision_llm(model_name)
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(
-            content=[
-                {"type": "text", "text": clean_text},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_base64}"
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": clean_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
+                        },
                     },
-                },
-            ]
-        ),
-    ]
+                ]
+            ),
+        ]
 
-    response = vision_llm.invoke(messages)
-    return str(response.content)
+        # Pass config={"callbacks": []} to isolate this LLM call from
+        # LangGraph's StreamMessagesHandler. Without this, the inherited
+        # callback propagates via ContextVar and leaks HumanMessage/AIMessage
+        # into the outer graph's messages stream, causing ValueError in
+        # _stream_generator which only handles AIMessageChunk and ToolMessage.
+        response = vision_llm.invoke(messages, config={"callbacks": []})
+        return str(response.content)
+    except FileNotFoundError as e:
+        return f"エラー: 画像ファイルが見つかりません - {e}"
+    except Exception as e:
+        return f"エラー: LLM分析に失敗しました ({model_name}) - {e}"
 
 
 @tool
@@ -294,7 +304,7 @@ class MyAgent(LangGraphAgent):
             "api_base": api_base,
             "api_key": self.api_key,
             "timeout": 180,
-            "streaming": True,
+            "streaming": False,  # Vision LLM runs inside tools; no streaming needed
             "max_retries": 3,
         }
 

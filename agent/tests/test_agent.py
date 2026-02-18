@@ -360,7 +360,7 @@ class TestMyAgentLangGraph:
             api_base="test_base/",
             api_key="test_key",
             timeout=180,
-            streaming=True,
+            streaming=False,
             max_retries=3,
         )
 
