@@ -39,7 +39,7 @@ class Config(DataRobotAppFrameworkBaseSettings):
 
     # Multi-LLM analyzer models for image analysis
     llm_analyzer_1_model: str = "datarobot/azure/gpt-5-2025-08-07"
-    llm_analyzer_2_model: str = "datarobot/vertex_ai/gemini-2.5-flash"
+    llm_analyzer_2_model: str = "datarobot/bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"
     sample_image_path: str = "agent/sample_images/shelf_sample.jpg"
 
     local_dev_port: int = Field(
