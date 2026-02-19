@@ -164,7 +164,7 @@ export function AnalysisResult({ events, isRunning, streamingContent }: Analysis
               )}
             </TabsTrigger>
             <TabsTrigger value="analyzer-b">
-              Analyzer B (Gemini)
+              Analyzer B (Claude)
               {isRunning && !parsed.analyzerB && (
                 <Loader2 className="w-3 h-3 animate-spin ml-1" />
               )}
