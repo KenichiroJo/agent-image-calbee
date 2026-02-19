@@ -354,9 +354,9 @@ class TestMyAgentLangGraph:
     @patch("agent.myagent.ChatLiteLLM")
     def test_create_vision_llm(self, mock_llm, agent):
         """Test that _create_vision_llm creates LLM with specified model."""
-        agent._create_vision_llm("datarobot/azure/gpt-5")
+        agent._create_vision_llm("datarobot/azure/gpt-5-2025-08-07")
         mock_llm.assert_called_once_with(
-            model="datarobot/azure/gpt-5",
+            model="datarobot/azure/gpt-5-2025-08-07",
             api_base="test_base/",
             api_key="test_key",
             timeout=180,
