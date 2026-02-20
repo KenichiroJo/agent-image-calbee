@@ -240,7 +240,7 @@ fastapi_server_app_source = pulumi_datarobot.ApplicationSource(
     ),
     runtime_parameter_values=fastapi_server_app_runtime_parameters,
     resources=pulumi_datarobot.ApplicationSourceResourcesArgs(
-        resource_label=CustomAppResourceBundles.CPU_8XL.value.id,
+        resource_label=CustomAppResourceBundles.CPU_7XL.value.id,
     ),
     required_key_scope_level=required_key_scope_level,
     **fastapi_server_app_source_args,
