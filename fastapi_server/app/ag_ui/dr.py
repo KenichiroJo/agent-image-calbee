@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import asyncio
+import base64
 import logging
+import os
+import re
 import uuid
 from typing import Any, AsyncGenerator, Dict
 
@@ -39,6 +42,47 @@ from app.ag_ui.base import AGUIAgent
 from app.config import Config
 
 logger = logging.getLogger(__name__)
+
+# Upload directory (same as in chat.py)
+_UPLOAD_DIR = os.path.join(".data", "uploads")
+
+# MIME type mapping for image files
+_MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+
+def _resolve_image_token(content: str) -> str:
+    """Replace [IMAGE_FILE:filename] tokens with [IMAGE_BASE64:data:...] tokens.
+
+    Reads the uploaded image file from the server's filesystem, base64-encodes it,
+    and replaces the token so the agent can receive image data without filesystem access.
+    """
+
+    def _replace(match: re.Match) -> str:
+        filename = match.group(1).strip()
+        file_path = os.path.join(_UPLOAD_DIR, filename)
+
+        if not os.path.exists(file_path):
+            logger.error(f"Uploaded image file not found: {file_path}")
+            return f"[IMAGE_ERROR:File not found: {filename}]"
+
+        ext = os.path.splitext(filename)[1].lower()
+        mime_type = _MIME_TYPES.get(ext, "image/jpeg")
+
+        try:
+            with open(file_path, "rb") as f:
+                image_data = f.read()
+            b64 = base64.b64encode(image_data).decode("utf-8")
+            return f"[IMAGE_BASE64:data:{mime_type};base64,{b64}]"
+        except Exception as e:
+            logger.error(f"Failed to read image file {file_path}: {e}")
+            return f"[IMAGE_ERROR:Read failed: {filename}]"
+
+    return re.sub(r"\[IMAGE_FILE:(.*?)\]", _replace, content)
 
 
 async def _merge_async_generators(
@@ -236,10 +280,19 @@ class DataRobotAGUIAgent(AGUIAgent):
     def _prepare_chat_completions_input(self, input: RunAgentInput) -> Dict[str, Any]:
         messages = []
         for input_message in input.messages:
+            content = input_message.content
+            # Resolve [IMAGE_FILE:filename] tokens to [IMAGE_BASE64:...] for the agent
+            # This is necessary because FastAPI and Agent run in separate containers
+            if (
+                input_message.role == "user"
+                and isinstance(content, str)
+                and "[IMAGE_FILE:" in content
+            ):
+                content = _resolve_image_token(content)
             messages.append(
                 {
                     "role": input_message.role,
-                    "content": input_message.content,
+                    "content": content,
                 }
             )
         return {

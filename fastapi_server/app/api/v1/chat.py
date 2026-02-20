@@ -187,8 +187,8 @@ ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 class UploadResponse(BaseModel):
-    path: str
-    filename: str
+    filename: str       # UUID-prefixed safe filename (for IMAGE_FILE token)
+    original_name: str  # Original filename (for display)
 
 
 @chat_router.post("/chat/upload")
@@ -221,8 +221,8 @@ async def upload_image(
         f.write(contents)
 
     return UploadResponse(
-        path=os.path.abspath(file_path),
-        filename=original_filename,
+        filename=safe_filename,
+        original_name=original_filename,
     )
 
 

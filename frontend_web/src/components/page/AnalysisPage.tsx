@@ -150,7 +150,7 @@ function AnalysisImplementation() {
       setIsUploading(false);
 
       // Send message with image path to agent
-      const msg = `[IMAGE:${result.path}] この店舗棚画像を詳細に分析してください。`;
+      const msg = `[IMAGE_FILE:${result.filename}] この店舗棚画像を詳細に分析してください。`;
       await sendMessage(msg);
 
       setProgressStep('done');

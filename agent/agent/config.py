@@ -40,7 +40,7 @@ class Config(DataRobotAppFrameworkBaseSettings):
     # Multi-LLM analyzer models for image analysis
     llm_analyzer_1_model: str = "datarobot/azure/gpt-5-2025-08-07"
     llm_analyzer_2_model: str = "datarobot/bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"
-    sample_image_path: str = "agent/sample_images/shelf_sample.jpg"
+    sample_image_path: str = ""  # Images are now passed via base64 from FastAPI
 
     local_dev_port: int = Field(
         default=8842, validation_alias="AGENT_PORT", ge=1, le=65535

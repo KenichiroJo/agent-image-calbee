@@ -24,8 +24,8 @@ export async function getChatHistory({ signal, chatId }: { signal: AbortSignal; 
 }
 
 export interface UploadImageResponse {
-  path: string;
-  filename: string;
+  filename: string;      // UUID-prefixed safe filename (for IMAGE_FILE token)
+  original_name: string; // Original filename (for display)
 }
 
 export async function uploadImage(file: File): Promise<UploadImageResponse> {

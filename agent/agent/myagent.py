@@ -37,54 +37,66 @@ _current_agent: Optional["MyAgent"] = None
 
 
 def _load_image_base64(user_text: str, config: Config) -> tuple[str, str]:
-    """Load image from file path, return (base64_str, clean_text).
+    """Load image from base64 token or file path, return (base64_str, clean_text).
 
-    Parses [IMAGE:path] token from user text. Falls back to sample image.
-    Resizes large images to max 1920px width.
+    Priority:
+    1. [IMAGE_BASE64:data:mime;base64,...] - base64 injected by FastAPI server (deploy)
+    2. [IMAGE:path] - file path (local dev, same container)
+    3. [IMAGE_ERROR:...] - server-side error propagation
+    4. No image token - raise error
     """
-    image_path = None
     clean_text = user_text
 
-    # Parse [IMAGE:path] token
-    match = re.search(r"\[IMAGE:(.*?)\]", user_text)
-    if match:
-        image_path = match.group(1).strip()
+    # Priority 1: Base64-encoded image token (deployed environment)
+    b64_match = re.search(
+        r"\[IMAGE_BASE64:data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)\]",
+        user_text,
+        re.DOTALL,
+    )
+    if b64_match:
+        image_base64 = b64_match.group(1).strip()
+        clean_text = re.sub(
+            r"\[IMAGE_BASE64:.*?\]", "", user_text, flags=re.DOTALL
+        ).strip()
+        if not clean_text:
+            clean_text = "この店舗棚画像を分析してください。"
+        return image_base64, clean_text
+
+    # Priority 2: Legacy [IMAGE:path] token (local dev)
+    path_match = re.search(r"\[IMAGE:(.*?)\]", user_text)
+    if path_match:
+        image_path = path_match.group(1).strip()
         clean_text = re.sub(r"\[IMAGE:.*?\]\s*", "", user_text).strip()
 
-    # Determine image file path
-    if image_path and os.path.exists(image_path):
-        file_path = image_path
-    else:
-        file_path = config.sample_image_path
-        if not os.path.isabs(file_path):
-            agent_dir = os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__))
-            )
-            file_path = os.path.join(agent_dir, file_path)
+        if image_path and os.path.exists(image_path):
+            img = Image.open(image_path)
+            max_width = 1920
+            if img.width > max_width:
+                ratio = max_width / img.width
+                new_size = (max_width, int(img.height * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
 
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Image file not found: {file_path}")
+            buffer = BytesIO()
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(buffer, format="JPEG", quality=85)
+            image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    # Load and resize image
-    img = Image.open(file_path)
-    max_width = 1920
-    if img.width > max_width:
-        ratio = max_width / img.width
-        new_size = (max_width, int(img.height * ratio))
-        img = img.resize(new_size, Image.LANCZOS)
+            if not clean_text:
+                clean_text = "この店舗棚画像を分析してください。"
+            return image_base64, clean_text
 
-    # Convert to base64
-    buffer = BytesIO()
-    img_format = "JPEG"
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    img.save(buffer, format=img_format, quality=85)
-    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    # Priority 3: Error token from FastAPI server
+    err_match = re.search(r"\[IMAGE_ERROR:(.*?)\]", user_text)
+    if err_match:
+        raise FileNotFoundError(
+            f"サーバーで画像を読み込めませんでした: {err_match.group(1)}"
+        )
 
-    if not clean_text:
-        clean_text = "この店舗棚画像を分析してください。"
-
-    return image_base64, clean_text
+    # No image token found
+    raise FileNotFoundError(
+        "画像が見つかりません。分析する画像をアップロードしてください。"
+    )
 
 
 def _call_vision_llm(
@@ -127,7 +139,7 @@ def _call_vision_llm(
 
 @tool
 def analyze_with_gpt(user_message: str) -> str:
-    """Analyzer A (GPT): 店舗棚画像をGPTで分析します。ゴールデンゾーン分析、フェイス数・シェルフシェア分析、価格戦略分析、競合商品特定を行います。user_messageにはユーザーの元のメッセージ（[IMAGE:path]トークン含む）をそのまま渡してください。"""
+    """Analyzer A (GPT): 店舗棚画像をGPTで分析します。ゴールデンゾーン分析、フェイス数・シェルフシェア分析、価格戦略分析、競合商品特定を行います。user_messageにはユーザーの元のメッセージ（[IMAGE_BASE64:...]トークン含む）をそのまま渡してください。"""
     global _current_agent
     if _current_agent is None:
         return "エラー: エージェントが初期化されていません"
@@ -141,7 +153,7 @@ def analyze_with_gpt(user_message: str) -> str:
 
 @tool
 def analyze_with_gemini(user_message: str) -> str:
-    """Analyzer B (Gemini): 店舗棚画像をGeminiで分析します。デジタルサイネージ・販促物分析、新商品・季節商品分析、陳列品質分析、カテゴリー配置分析を行います。user_messageにはユーザーの元のメッセージ（[IMAGE:path]トークン含む）をそのまま渡してください。"""
+    """Analyzer B (Claude): 店舗棚画像をClaudeで分析します。デジタルサイネージ・販促物分析、新商品・季節商品分析、陳列品質分析、カテゴリー配置分析を行います。user_messageにはユーザーの元のメッセージ（[IMAGE_BASE64:...]トークン含む）をそのまま渡してください。"""
     global _current_agent
     if _current_agent is None:
         return "エラー: エージェントが初期化されていません"
@@ -159,7 +171,7 @@ AGENT_SYSTEM_PROMPT = """あなたはカルビー株式会社の店舗棚分析A
 
 ## 分析手順:
 1. まず、analyze_with_gpt ツールと analyze_with_gemini ツールの**両方**を呼び出してください
-   - 両方のツールに、ユーザーのメッセージをそのまま渡してください（[IMAGE:...]トークンを含む）
+   - 両方のツールに、ユーザーのメッセージをそのまま渡してください（[IMAGE_BASE64:...]トークンを含む）
 2. 両方のツールの結果が返ってきたら、統合レポートを作成してください
 
 ## 統合レポートの形式:
