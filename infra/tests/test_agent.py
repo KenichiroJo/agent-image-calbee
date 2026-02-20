@@ -408,8 +408,8 @@ def test_custom_model_resource_bundle_and_replicas(monkeypatch):
     agent_infra.pulumi_datarobot.CustomModel.assert_called_once()
     args, kwargs = agent_infra.pulumi_datarobot.CustomModel.call_args
 
-    # Verify resource_bundle_id is set to cpu.3xlarge
-    assert kwargs["resource_bundle_id"] == "cpu.3xlarge"
+    # Verify resource_bundle_id is set to cpu.8xlarge
+    assert kwargs["resource_bundle_id"] == "cpu.8xlarge"
 
     # Verify replicas is set to 1
     assert kwargs["replicas"] == 1
