@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+from io import BytesIO
 from typing import Any, AsyncGenerator, Dict
 
 from ag_ui.core import (
@@ -74,9 +75,21 @@ def _resolve_image_token(content: str) -> str:
         mime_type = _MIME_TYPES.get(ext, "image/jpeg")
 
         try:
-            with open(file_path, "rb") as f:
-                image_data = f.read()
-            b64 = base64.b64encode(image_data).decode("utf-8")
+            from PIL import Image
+
+            img = Image.open(file_path)
+            max_width = 1920
+            if img.width > max_width:
+                ratio = max_width / img.width
+                new_size = (max_width, int(img.height * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+
+            buffer = BytesIO()
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(buffer, format="JPEG", quality=85)
+            b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            mime_type = "image/jpeg"
             return f"[IMAGE_BASE64:data:{mime_type};base64,{b64}]"
         except Exception as e:
             logger.error(f"Failed to read image file {file_path}: {e}")

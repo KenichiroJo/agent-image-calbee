@@ -48,6 +48,7 @@ DEFAULT_CUSTOM_MODEL_WORKERS: Final[str] = "5" if ENABLE_AGENT_HA_MODE else "2"
 DEFAULT_DRUM_SERVER_TYPE: Final[str] = "gunicorn"
 DEFAULT_DRUM_GUNICORN_WORKER_CLASS: Final[str] = "sync"
 DEFAULT_DRUM_WORKER_CONNECTIONS: Final[str] = "1"
+DEFAULT_DRUM_CLIENT_REQUEST_TIMEOUT: Final[str] = "600"
 
 # Custom Model resource bundle configuration
 DEFAULT_AGENT_RESOURCE_BUNDLE_ID: Final[str] = "cpu.8xlarge"
@@ -445,6 +446,11 @@ agent_runtime_parameter_values.extend(
             key="DRUM_WORKER_CONNECTIONS",
             type="numeric",
             value=DEFAULT_DRUM_WORKER_CONNECTIONS,
+        ),
+        pulumi_datarobot.CustomModelRuntimeParameterValueArgs(
+            key="DRUM_CLIENT_REQUEST_TIMEOUT",
+            type="numeric",
+            value=DEFAULT_DRUM_CLIENT_REQUEST_TIMEOUT,
         ),
     ]
 )
