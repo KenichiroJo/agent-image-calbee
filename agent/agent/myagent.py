@@ -39,69 +39,6 @@ _current_image_base64: Optional[str] = None
 _current_clean_text: Optional[str] = None
 
 
-def _load_image_base64(user_text: str, config: Config) -> tuple[str, str]:
-    """Load image from base64 token or file path, return (base64_str, clean_text).
-
-    Priority:
-    1. [IMAGE_BASE64:data:mime;base64,...] - base64 injected by FastAPI server (deploy)
-    2. [IMAGE:path] - file path (local dev, same container)
-    3. [IMAGE_ERROR:...] - server-side error propagation
-    4. No image token - raise error
-    """
-    clean_text = user_text
-
-    # Priority 1: Base64-encoded image token (deployed environment)
-    b64_match = re.search(
-        r"\[IMAGE_BASE64:data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)\]",
-        user_text,
-        re.DOTALL,
-    )
-    if b64_match:
-        image_base64 = b64_match.group(1).strip()
-        clean_text = re.sub(
-            r"\[IMAGE_BASE64:.*?\]", "", user_text, flags=re.DOTALL
-        ).strip()
-        if not clean_text:
-            clean_text = "この店舗棚画像を分析してください。"
-        return image_base64, clean_text
-
-    # Priority 2: Legacy [IMAGE:path] token (local dev)
-    path_match = re.search(r"\[IMAGE:(.*?)\]", user_text)
-    if path_match:
-        image_path = path_match.group(1).strip()
-        clean_text = re.sub(r"\[IMAGE:.*?\]\s*", "", user_text).strip()
-
-        if image_path and os.path.exists(image_path):
-            img = Image.open(image_path)
-            max_width = 1920
-            if img.width > max_width:
-                ratio = max_width / img.width
-                new_size = (max_width, int(img.height * ratio))
-                img = img.resize(new_size, Image.LANCZOS)
-
-            buffer = BytesIO()
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.save(buffer, format="JPEG", quality=85)
-            image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-            if not clean_text:
-                clean_text = "この店舗棚画像を分析してください。"
-            return image_base64, clean_text
-
-    # Priority 3: Error token from FastAPI server
-    err_match = re.search(r"\[IMAGE_ERROR:(.*?)\]", user_text)
-    if err_match:
-        raise FileNotFoundError(
-            f"サーバーで画像を読み込めませんでした: {err_match.group(1)}"
-        )
-
-    # No image token found
-    raise FileNotFoundError(
-        "画像が見つかりません。分析する画像をアップロードしてください。"
-    )
-
-
 def _call_vision_llm(
     model_name: str, system_prompt: str,
     agent: "MyAgent",
@@ -287,9 +224,18 @@ class MyAgent(LangGraphAgent):
                 clean_text = "この店舗棚画像を分析してください。"
             _current_clean_text = clean_text
             # Replace the message with clean text so the main LLM doesn't
-            # see the huge base64 string
+            # see the huge base64 string.
+            # IMPORTANT: Reuse the original message's id so that LangGraph's
+            # StreamMessagesHandler deduplication (which marks input message IDs
+            # as "seen" in on_chain_start) will skip emitting this message again.
+            # Without id reuse, a new HumanMessage is emitted into the messages
+            # stream, causing ValueError in _stream_generator (which only handles
+            # AIMessageChunk and ToolMessage), resulting in the
+            # "unhandled errors in a TaskGroup (1 sub-exception)" error.
             from langchain_core.messages import HumanMessage as HM
-            new_messages = list(messages[:-1]) + [HM(content=clean_text)]
+            new_messages = list(messages[:-1]) + [
+                HM(content=clean_text, id=last_msg.id)
+            ]
             return {"messages": new_messages}
 
         # Try legacy [IMAGE:path] token
@@ -314,7 +260,9 @@ class MyAgent(LangGraphAgent):
                 _current_image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
                 _current_clean_text = clean_text
                 from langchain_core.messages import HumanMessage as HM
-                new_messages = list(messages[:-1]) + [HM(content=clean_text)]
+                new_messages = list(messages[:-1]) + [
+                    HM(content=clean_text, id=last_msg.id)
+                ]
                 return {"messages": new_messages}
 
         return state
