@@ -34,6 +34,9 @@ from agent.prompts import ANALYZER_1_PROMPT, ANALYZER_2_PROMPT
 
 # Module-level reference to the agent instance for tools to access
 _current_agent: Optional["MyAgent"] = None
+# Module-level storage for the current image base64 and clean text
+_current_image_base64: Optional[str] = None
+_current_clean_text: Optional[str] = None
 
 
 def _load_image_base64(user_text: str, config: Config) -> tuple[str, str]:
@@ -100,12 +103,21 @@ def _load_image_base64(user_text: str, config: Config) -> tuple[str, str]:
 
 
 def _call_vision_llm(
-    model_name: str, system_prompt: str, user_text: str,
+    model_name: str, system_prompt: str,
     agent: "MyAgent",
 ) -> str:
-    """Call a vision LLM with an image and return the text response."""
+    """Call a vision LLM with the stored image and return the text response.
+
+    Uses module-level _current_image_base64 and _current_clean_text instead of
+    receiving the image via tool arguments. This avoids the main LLM needing to
+    pass the entire base64 string as a tool argument (which would exceed token limits).
+    """
+    global _current_image_base64, _current_clean_text
     try:
-        image_base64, clean_text = _load_image_base64(user_text, agent.config)
+        if _current_image_base64 is None:
+            return "エラー: 画像データが設定されていません。画像をアップロードしてください。"
+
+        clean_text = _current_clean_text or "この店舗棚画像を分析してください。"
 
         vision_llm = agent._create_vision_llm(model_name)
 
@@ -117,7 +129,7 @@ def _call_vision_llm(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}"
+                            "url": f"data:image/jpeg;base64,{_current_image_base64}"
                         },
                     },
                 ]
@@ -138,29 +150,27 @@ def _call_vision_llm(
 
 
 @tool
-def analyze_with_gpt(user_message: str) -> str:
-    """Analyzer A (GPT): 店舗棚画像をGPTで分析します。ゴールデンゾーン分析、フェイス数・シェルフシェア分析、価格戦略分析、競合商品特定を行います。user_messageにはユーザーの元のメッセージ（[IMAGE_BASE64:...]トークン含む）をそのまま渡してください。"""
+def analyze_with_gpt() -> str:
+    """Analyzer A (GPT): 店舗棚画像をGPTで分析します。ゴールデンゾーン分析、フェイス数・シェルフシェア分析、価格戦略分析、競合商品特定を行います。引数は不要です。画像は自動的に取得されます。"""
     global _current_agent
     if _current_agent is None:
         return "エラー: エージェントが初期化されていません"
     return _call_vision_llm(
         _current_agent.config.llm_analyzer_1_model,
         ANALYZER_1_PROMPT,
-        user_message,
         _current_agent,
     )
 
 
 @tool
-def analyze_with_gemini(user_message: str) -> str:
-    """Analyzer B (Claude): 店舗棚画像をClaudeで分析します。デジタルサイネージ・販促物分析、新商品・季節商品分析、陳列品質分析、カテゴリー配置分析を行います。user_messageにはユーザーの元のメッセージ（[IMAGE_BASE64:...]トークン含む）をそのまま渡してください。"""
+def analyze_with_gemini() -> str:
+    """Analyzer B (Claude): 店舗棚画像をClaudeで分析します。デジタルサイネージ・販促物分析、新商品・季節商品分析、陳列品質分析、カテゴリー配置分析を行います。引数は不要です。画像は自動的に取得されます。"""
     global _current_agent
     if _current_agent is None:
         return "エラー: エージェントが初期化されていません"
     return _call_vision_llm(
         _current_agent.config.llm_analyzer_2_model,
         ANALYZER_2_PROMPT,
-        user_message,
         _current_agent,
     )
 
@@ -171,7 +181,7 @@ AGENT_SYSTEM_PROMPT = """あなたはカルビー株式会社の店舗棚分析A
 
 ## 分析手順:
 1. まず、analyze_with_gpt ツールと analyze_with_gemini ツールの**両方**を呼び出してください
-   - 両方のツールに、ユーザーのメッセージをそのまま渡してください（[IMAGE_BASE64:...]トークンを含む）
+   - どちらのツールも引数は不要です。画像は自動的に取得されます。
 2. 両方のツールの結果が返ってきたら、統合レポートを作成してください
 
 ## 統合レポートの形式:
@@ -204,6 +214,7 @@ AGENT_SYSTEM_PROMPT = """あなたはカルビー株式会社の店舗棚分析A
 - 2つのAnalyzerの結果を必ず両方参照してください
 - 具体的で実行可能な提案を心がけてください
 - 必ず analyze_with_gpt と analyze_with_gemini の両方のツールを呼び出してから統合レポートを作成してください
+- ツールの呼び出しに引数は不要です
 """
 
 
@@ -239,14 +250,85 @@ class MyAgent(LangGraphAgent):
         global _current_agent
         _current_agent = self
 
+    @staticmethod
+    def _extract_image(state: MessagesState) -> MessagesState:
+        """Extract image base64 from user message and store in module-level vars.
+
+        This runs before the agent node so that tools can access the image
+        without the main LLM needing to pass the huge base64 string as a tool argument.
+        The user's message content is replaced with clean text only.
+        """
+        global _current_image_base64, _current_clean_text
+        _current_image_base64 = None
+        _current_clean_text = None
+
+        messages = state["messages"]
+        if not messages:
+            return state
+
+        last_msg = messages[-1]
+        user_text = last_msg.content if isinstance(last_msg.content, str) else ""
+
+        if not user_text:
+            return state
+
+        # Try to extract base64 image
+        b64_match = re.search(
+            r"\[IMAGE_BASE64:data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)\]",
+            user_text,
+            re.DOTALL,
+        )
+        if b64_match:
+            _current_image_base64 = b64_match.group(1).strip()
+            clean_text = re.sub(
+                r"\[IMAGE_BASE64:.*?\]", "", user_text, flags=re.DOTALL
+            ).strip()
+            if not clean_text:
+                clean_text = "この店舗棚画像を分析してください。"
+            _current_clean_text = clean_text
+            # Replace the message with clean text so the main LLM doesn't
+            # see the huge base64 string
+            from langchain_core.messages import HumanMessage as HM
+            new_messages = list(messages[:-1]) + [HM(content=clean_text)]
+            return {"messages": new_messages}
+
+        # Try legacy [IMAGE:path] token
+        path_match = re.search(r"\[IMAGE:(.*?)\]", user_text)
+        if path_match:
+            image_path = path_match.group(1).strip()
+            clean_text = re.sub(r"\[IMAGE:.*?\]\s*", "", user_text).strip()
+            if not clean_text:
+                clean_text = "この店舗棚画像を分析してください。"
+
+            if image_path and os.path.exists(image_path):
+                img = Image.open(image_path)
+                max_width = 1920
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    new_size = (max_width, int(img.height * ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+                buffer = BytesIO()
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                img.save(buffer, format="JPEG", quality=85)
+                _current_image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                _current_clean_text = clean_text
+                from langchain_core.messages import HumanMessage as HM
+                new_messages = list(messages[:-1]) + [HM(content=clean_text)]
+                return {"messages": new_messages}
+
+        return state
+
     @property
     def workflow(self) -> StateGraph[MessagesState]:
         langgraph_workflow = StateGraph[
             MessagesState, None, MessagesState, MessagesState
         ](MessagesState)
 
+        langgraph_workflow.add_node("extract_image", self._extract_image)
         langgraph_workflow.add_node("agent", self.agent)
-        langgraph_workflow.add_edge(START, "agent")
+        langgraph_workflow.add_edge(START, "extract_image")
+        langgraph_workflow.add_edge("extract_image", "agent")
         langgraph_workflow.add_edge("agent", END)
 
         return langgraph_workflow  # type: ignore[return-value]
