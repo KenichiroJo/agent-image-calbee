@@ -24,7 +24,7 @@ from datarobot.auth.session import AuthCtx
 from datarobot.auth.typing import Metadata
 from datarobot.core import getenv
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.ag_ui.translate import ExtendedBaseMessage, translate_messages
@@ -224,6 +224,27 @@ async def upload_image(
         filename=safe_filename,
         original_name=original_filename,
     )
+
+
+@chat_router.get("/chat/uploads/{filename}")
+async def get_uploaded_image(
+    filename: str,
+    auth_ctx: AuthCtx[Metadata] = Depends(must_get_auth_ctx),
+) -> FileResponse:
+    """Serve an uploaded image file. Requires authentication."""
+    # Path traversal prevention
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filename",
+        )
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+    return FileResponse(file_path)
 
 
 @dataclass

@@ -28,6 +28,15 @@ export interface UploadImageResponse {
   original_name: string; // Original filename (for display)
 }
 
+/**
+ * Construct a URL to fetch an uploaded image from the backend.
+ * Used to display historical analysis images when loading past conversations.
+ */
+export function getUploadedImageUrl(filename: string): string {
+  const base = apiClient.defaults.baseURL || '';
+  return `${base}/v1/chat/uploads/${encodeURIComponent(filename)}`;
+}
+
 export async function uploadImage(file: File): Promise<UploadImageResponse> {
   const formData = new FormData();
   formData.append('file', file);

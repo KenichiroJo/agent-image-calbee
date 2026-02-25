@@ -6,6 +6,8 @@ export interface ImageUploadAreaProps {
   onImageSelect: (file: File) => void;
   onImageClear: () => void;
   selectedImage: File | null;
+  /** URL to display for a previously analyzed image (loaded from history) */
+  historicalImageUrl?: string | null;
   disabled?: boolean;
 }
 
@@ -13,6 +15,7 @@ export function ImageUploadArea({
   onImageSelect,
   onImageClear,
   selectedImage,
+  historicalImageUrl,
   disabled = false,
 }: ImageUploadAreaProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +102,17 @@ export function ImageUploadArea({
           </div>
           <div className="image-filename">
             {selectedImage.name}
+          </div>
+        </div>
+      ) : historicalImageUrl ? (
+        <div className="image-preview-container">
+          <img
+            src={historicalImageUrl}
+            alt="Analyzed shelf image"
+            className="image-preview"
+          />
+          <div className="image-filename" style={{ opacity: 0.7 }}>
+            過去の分析画像
           </div>
         </div>
       ) : (

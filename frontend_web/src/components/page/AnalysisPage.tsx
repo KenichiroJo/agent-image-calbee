@@ -11,7 +11,7 @@ import { ImageUploadArea } from '@/components/ImageUploadArea';
 import { AnalysisResult } from '@/components/AnalysisResult';
 import { AnalysisProgress, type AnalysisProgressProps } from '@/components/AnalysisProgress';
 import { isMessageStateEvent } from '@/types/events';
-import { uploadImage } from '@/api/chat/requests';
+import { uploadImage, getUploadedImageUrl } from '@/api/chat/requests';
 import { type MessageResponse } from '@/api/chat/types';
 
 const initialMessages: MessageResponse[] = [
@@ -124,6 +124,26 @@ function AnalysisImplementation() {
     }
   }, [isAgentRunning, progressStep]);
 
+  // Derive the historical image URL from the user message in combinedEvents.
+  // When loading a past analysis, the user message contains [IMAGE_FILE:filename].
+  const historicalImageUrl = useMemo(() => {
+    if (selectedImage) return null; // New upload takes priority
+    if (!combinedEvents?.length) return null;
+    for (const event of combinedEvents) {
+      if (event.role === 'user') {
+        const text = event.content?.parts
+          ?.filter((p: any) => p.type === 'text')
+          .map((p: any) => p.text)
+          .join('') || '';
+        const match = text.match(/\[IMAGE_FILE:([^\]]+)\]/);
+        if (match) {
+          return getUploadedImageUrl(match[1].trim());
+        }
+      }
+    }
+    return null;
+  }, [combinedEvents, selectedImage]);
+
   // Extract streaming content from the currently streaming message
   const streamingContent = useMemo(() => {
     if (message?.content?.parts) {
@@ -175,6 +195,7 @@ function AnalysisImplementation() {
         <div className="analysis-upload-section">
           <ImageUploadArea
             selectedImage={selectedImage}
+            historicalImageUrl={historicalImageUrl}
             onImageSelect={setSelectedImage}
             onImageClear={() => {
               setSelectedImage(null);
